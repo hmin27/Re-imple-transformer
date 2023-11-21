@@ -112,5 +112,66 @@ class MultiheadAttention(nn.Module):
 
         return self.w_o(x)
 
+class ResidualConnection(nn.Module):
 
+    def __init__(self, dropout):
+        super().__init__()
+        self.dropout = nn.Dropout(dropout)
+        self.norm = LayerNormalization()
 
+    def forward(self, x, sublayer):
+        return x + self.dropout(sublayer(self.norm(x)))
+    
+class EncoderBlock(nn.Module):
+
+    def __init__(self, self_attention_block: MultiheadAttention, feed_forward_block: FeedForward, dropout):
+        super().__init__()
+        self.self_attention_block = self_attention_block
+        self.feed_forward_block = feed_forward_block
+        self.residual_connections = nn.ModuleList([ResidualConnection(dropout) for _ in range(2)])  # ResidualConnection 모듈 2개 리스트에 저장
+
+    def forward(self, x, src_mask):   # mask for padding
+        x = self.residual_connections[0](x, self.self_attention_block(x, x, x, src_mask))  # self attention
+        x = self.feed_forward_block[1](x, self.feed_forward_block)
+        return x 
+    
+class Encoder(nn.Module):  # N encoders
+
+    def __init__(self, layers: nn.ModuleList):
+        super().__init__()
+        self.layers = layers
+        self.norm = LayerNormalization()
+
+    def forward(self, x, mask):
+        for layer in self.layers:
+            x = layer(x, mask)
+        return self.norm(x)
+
+class DecoderBlock(nn.Module):
+
+    def __init__(self, self_attention_block: MultiheadAttention, cross_attention_block: MultiheadAttention, feed_forward_block: FeedForward, dropout):
+        super().__init__()
+        self.self_attention_block = self.self_attention_block
+        self.cross_attention_block = cross_attention_block
+        self.feed_forward_block = feed_forward_block
+        self.residual_connections = nn.Module(ResidualConnection(dropout) for _ in range(3))
+
+    def forward(self, x, encoder_output, src_mask, tgt_mask):
+        x = self.residual_connections[0](x, self.self_attention_block(x, x, x, tgt_mask))
+        x = self.residual_connections[1](x, self.self_attention_block(x, encoder_output, encoder_output, src_mask))
+        x = self.residual_connections[2](x, self.feed_forward_block)
+        return x 
+    
+class Decoder(nn.Module):  # N decoders
+
+    def __init__(self, layers: nn.ModuleList):
+        super().__init__()
+        self.layers = layers
+        self.norm = LayerNormalization()
+
+    def forward(self, x, encoder_output, src_mask, tgt_mask):
+        for layer in self.layers:
+            x = layer(x, encoder_output, src_mask, tgt_mask)
+        return self.norm(x)
+
+                                         
