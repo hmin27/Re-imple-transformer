@@ -74,10 +74,10 @@ class MultiheadAttention(nn.Module):
         assert d_model % h == 0, "d_model is not divisible by h"
 
         self.d_k = d_model // h  # dim of attention head
-        self.w_q = nn.linear(d_model, d_model)
-        self.w_k = nn.linear(d_model, d_model)
-        self.w_v = nn.linear(d_model, d_model)
-        self.w_o = nn.linear(d_model, d_model)
+        self.w_q = nn.Linear(d_model, d_model)
+        self.w_k = nn.Linear(d_model, d_model)
+        self.w_v = nn.Linear(d_model, d_model)
+        self.w_o = nn.Linear(d_model, d_model)
         self.dropout = nn.Dropout(dropout)
 
     @staticmethod  # instance 호출 없이 멤버함수 사용 가능
@@ -85,25 +85,32 @@ class MultiheadAttention(nn.Module):
         d_k = query.shape[-1]
         attention_scores = (query @ key.transpose(-2, -1)) / math.sqrt(d_k)  # (batch, h, d_k, seq_len)
 
-        ### Mask 정의
+        if mask is not None:   # mask: attention에서 상관없는 단어를 softmax에서 0으로 만들기 위함
+            attention_scores.masked_fill_(mask==0, -1e9)
 
         attention_scores = attention_scores.softmax(dim = -1)
 
-        ## dropout 
+        if dropout is not None:
+            attention_scores = dropout(attention_scores) 
 
         return (attention_scores @ value), attention_scores
 
 
-
     def forward(self, q, k, v, mask):
-        # mask = attention에서 상관없는 단어를 가리는 용도 
-        query = self.w_q(q) # (batch, seq_len, d_model) -> (batch, seq_len, d_model)
+        query = self.w_q(q)  # (batch, seq_len, d_model) -> (batch, seq_len, d_model)
         key = self.w_k(k)
         value = self.w_v(v)
 
-        query = query.view(query.shape[0], query.shape[1], self.h, self.d_k).transpose(1, 2)
-        # batch, sew_len의 dim은 유지, d_model을 h와 d_k로 나누기
-        # transpose를 통해 seq_len과 h 순서 변경 -> (batch, h, seq_len, d_k)
+        query = query.view(query.shape[0], query.shape[1], self.h, self.d_k).transpose(1, 2)  # -> (batch, h, seq_len, d_k), make matrix seq_len by d_k
         key = key.view(key.shape[0], key.shape[1], self.h, self.d_k).transpose(1, 2)
         value = value.view(value.shape[0], value.shape[1], self.h, self.d_k).transpose(1, 2)
+        # batch, sew_len의 dim은 유지, d_model을 h와 d_k로 나누기
+
+        x, self.attention_scores = MultiheadAttention.attention(query, key, value, mask, self.dropout)
+
+        x = x.transpose(1, 2).contiguous().view(x.shape[0], -1, self.h * self.d_k)  # -> (batch, seq_len, h, d_k)
+
+        return self.w_o(x)
+
+
 
